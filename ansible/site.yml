@@ -1,44 +1,58 @@
 ---
+# ===========================
+# Install & Configure Redis Master
+# ===========================
 - name: Install Redis Master
   hosts: redis_master
   become: yes
   tasks:
 
-    - name: Install Redis Master
+    - name: Install Redis
       apt:
         name: redis-server
         state: present
         update_cache: yes
 
     - name: Configure Redis master
-      blockinfile:
+      lineinfile:
         path: /etc/redis/redis.conf
-        block: |
-          bind 0.0.0.0
-          protected-mode no
+        regexp: '^bind '
+        line: "bind 0.0.0.0"
+
+    - name: Disable protected mode
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^protected-mode '
+        line: "protected-mode no"
 
     - name: Restart Redis
       service:
         name: redis-server
         state: restarted
+        enabled: yes
 
 
+# ===========================
+# Install & Configure Redis Replica
+# ===========================
 - name: Install Redis Replica
   hosts: redis_replica
   become: yes
+  vars:
+    redis_master_ip: "{{ groups['redis_master'][0] }}"
   tasks:
 
-    - name: Install Redis Replica
+    - name: Install Redis
       apt:
         name: redis-server
         state: present
         update_cache: yes
 
-    - name: Configure Redis Replica
+    - name: Configure Redis replica
       blockinfile:
         path: /etc/redis/redis.conf
         block: |
-          replicaof {{ hostvars['redis_master'].ansible_host }} 6379
+          replicaof {{ redis_master_ip }} 6379
           bind 0.0.0.0
           protected-mode no
 
@@ -46,3 +60,4 @@
       service:
         name: redis-server
         state: restarted
+        enabled: yes
