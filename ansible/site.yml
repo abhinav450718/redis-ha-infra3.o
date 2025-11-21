@@ -11,23 +11,23 @@
 
     - name: Install required packages
       apt:
-        name: [redis-server]
+        name: redis-server
         state: present
         update_cache: yes
 
-    - name: Configure Redis master
+    - name: Configure Redis master - bind
       lineinfile:
         path: /etc/redis/redis.conf
         regexp: '^bind '
         line: "bind {{ redis_bind_interface }}"
 
-    - name: Disable protected mode (required for replication inside VPC)
+    - name: Disable protected mode (required for replication)
       lineinfile:
         path: /etc/redis/redis.conf
         regexp: '^protected-mode '
         line: "protected-mode no"
 
-    - name: Restart Redis
+    - name: Restart Redis Master
       service:
         name: redis-server
         state: restarted
@@ -41,12 +41,12 @@
   hosts: redis_replica
   become: yes
   vars:
-    redis_master_ip: "{{ hostvars['redis_master'].ansible_host }}"
+    redis_master_ip: "{{ groups['redis_master'][0] }}"
   tasks:
 
     - name: Install required packages
       apt:
-        name: [redis-server]
+        name: redis-server
         state: present
         update_cache: yes
 
@@ -58,7 +58,7 @@
           bind 0.0.0.0
           protected-mode no
 
-    - name: Restart Redis
+    - name: Restart Redis Replica
       service:
         name: redis-server
         state: restarted
