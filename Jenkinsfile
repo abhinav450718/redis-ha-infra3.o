@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = "sa-east-1"
+        AWS_REGION = "eu-west-2"
     }
 
     stages {
@@ -51,7 +51,7 @@ ${bastion}
 
 [all:vars]
 ansible_user=ubuntu
-ansible_ssh_private_key_file=../terraform/redis_key.pem
+ansible_ssh_private_key_file=../terraform/redis-demo-key.pem
 ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -J ubuntu@${bastion}
 """
                 }
@@ -76,10 +76,10 @@ ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/n
                 BASTION=$(cd terraform && terraform output -raw bastion_public_ip)
 
                 echo "Ping Master:"
-                ssh -o StrictHostKeyChecking=no -i terraform/redis_key.pem -J ubuntu@$BASTION ubuntu@$MASTER 'redis-cli ping'
+                ssh -o StrictHostKeyChecking=no -i terraform/redis-demo-key.pem -J ubuntu@$BASTION ubuntu@$MASTER 'redis-cli ping'
 
                 echo "Ping Replica:"
-                ssh -o StrictHostKeyChecking=no -i terraform/redis_key.pem -J ubuntu@$BASTION ubuntu@$REPLICA 'redis-cli ping'
+                ssh -o StrictHostKeyChecking=no -i terraform/redis-demo-key.pem -J ubuntu@$BASTION ubuntu@$REPLICA 'redis-cli ping'
                 '''
             }
         }
