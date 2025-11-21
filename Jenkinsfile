@@ -1,15 +1,14 @@
 pipeline {
+
     agent any
 
     environment {
-        AWS_REGION = "eu-west-1"
+        AWS_REGION = "sa-east-1"
     }
 
     stages {
 
-        /* ---------------------------
-           CHECKOUT REPOSITORY
-        --------------------------- */
+        /* ------------------ CHECKOUT ------------------ */
         stage('Checkout Repo') {
             steps {
                 git branch: 'main',
@@ -17,9 +16,7 @@ pipeline {
             }
         }
 
-        /* ---------------------------
-           TERRAFORM APPLY
-        --------------------------- */
+        /* ------------------ TERRAFORM ------------------ */
         stage('Terraform Apply') {
             steps {
                 withCredentials([
@@ -38,15 +35,13 @@ pipeline {
             }
         }
 
-        /* ---------------------------
-           GENERATE ANSIBLE INVENTORY
-        --------------------------- */
+        /* ------------------ GENERATE INVENTORY ------------------ */
         stage('Generate Inventory') {
             steps {
                 script {
-                    def master_ip  = sh(script: "cd terraform && terraform output -raw redis_master_private_ip",  returnStdout: true).trim()
+                    def master_ip  = sh(script: "cd terraform && terraform output -raw redis_master_private_ip", returnStdout: true).trim()
                     def replica_ip = sh(script: "cd terraform && terraform output -raw redis_replica_private_ip", returnStdout: true).trim()
-                    def bastion_ip = sh(script: "cd terraform && terraform output -raw bastion_public_ip",       returnStdout: true).trim()
+                    def bastion_ip = sh(script: "cd terraform && terraform output -raw bastion_public_ip", returnStdout: true).trim()
 
                     writeFile file: "ansible/inventory/hosts.ini", text: """
 [redis_master]
@@ -61,32 +56,25 @@ ${bastion_ip}
 [all:vars]
 ansible_user=ubuntu
 ansible_ssh_private_key_file=../terraform/redis-demo-key.pem
-ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -J ubuntu@${bastion_ip}
 """
-
-                    sh "echo '===== GENERATED INVENTORY ====='"
-                    sh "cat ansible/inventory/hosts.ini"
                 }
             }
         }
 
-        /* ---------------------------
-           INSTALL REDIS VIA ANSIBLE
-        --------------------------- */
+        /* ------------------ ANSIBLE ------------------ */
         stage('Install Redis via Ansible') {
             steps {
                 sh '''
                     cd ansible
                     ansible-galaxy install -r requirements.yml
-                    ansible-playbook site.yml -i inventory/hosts.ini
+                    ansible-playbook site.yml -i inventory/hosts.ini \
+                      --ssh-common-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
                 '''
             }
         }
 
-        /* ---------------------------
-           REDIS TEST
-        --------------------------- */
-        stage('Redis Test') {
+        /* ------------------ REDIS TEST ------------------ */
+        stage('Redis Test – Master & Replica') {
             steps {
                 sh '''
                 cd terraform
@@ -95,31 +83,32 @@ ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/n
                 BASTION=$(terraform output -raw bastion_public_ip)
                 cd ..
 
-                echo "Testing Redis Master:"
-                ssh -o StrictHostKeyChecking=no \
-                    -o UserKnownHostsFile=/dev/null \
-                    -i terraform/redis-demo-key.pem \
-                    -J ubuntu@$BASTION ubuntu@$MASTER "redis-cli ping"
+                echo "SSH test via Bastion -> Redis Master"
+                ssh \
+                  -o StrictHostKeyChecking=no \
+                  -o UserKnownHostsFile=/dev/null \
+                  -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i terraform/redis-demo-key.pem ubuntu@$BASTION -W %h:%p" \
+                  -i terraform/redis-demo-key.pem \
+                  ubuntu@$MASTER "redis-cli ping"
 
-                echo "Testing Redis Replica:"
-                ssh -o StrictHostKeyChecking=no \
-                    -o UserKnownHostsFile=/dev/null \
-                    -i terraform/redis-demo-key.pem \
-                    -J ubuntu@$BASTION ubuntu@$REPLICA "redis-cli ping"
+                echo "SSH test via Bastion -> Redis Replica"
+                ssh \
+                  -o StrictHostKeyChecking=no \
+                  -o UserKnownHostsFile=/dev/null \
+                  -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i terraform/redis-demo-key.pem ubuntu@$BASTION -W %h:%p" \
+                  -i terraform/redis-demo-key.pem \
+                  ubuntu@$REPLICA "redis-cli ping"
                 '''
             }
         }
     }
 
-    /* ---------------------------
-       POST ACTIONS
-    --------------------------- */
     post {
-        always {
-            echo "Pipeline finished."
+        success {
+            echo "✔ Redis HA Deployment Successful!"
         }
         failure {
-            echo "Pipeline FAILED! Fix errors above."
+            echo "❌ Pipeline FAILED! Check errors above."
         }
     }
 }
