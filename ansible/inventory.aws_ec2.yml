@@ -1,0 +1,23 @@
+---
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - eu-west-2
+
+filters:
+  tag:Project:
+    - redis-ha-demo
+
+# group by the Role tag, so we get groups: bastion, redis-master, redis-replica
+keyed_groups:
+  - key: tags['Role']
+    prefix: ""
+
+# Use IPs as hostnames
+hostnames:
+  - private-ip-address
+  - ip-address
+
+compose:
+  # Prefer public IP if exists (bastion), otherwise private IP
+  ansible_host: public_ip_address | default(private_ip_address)

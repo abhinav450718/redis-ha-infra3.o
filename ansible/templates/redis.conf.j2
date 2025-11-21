@@ -1,0 +1,32 @@
+bind 0.0.0.0
+protected-mode no
+port 6379
+
+tcp-backlog 511
+timeout 0
+tcp-keepalive 300
+
+daemonize no
+supervised systemd
+
+loglevel notice
+logfile /var/log/redis/redis-server.log
+
+databases 16
+
+save 900 1
+save 300 10
+save 60 10000
+
+stop-writes-on-bgsave-error yes
+
+rdbcompression yes
+rdbchecksum yes
+dbfilename dump.rdb
+dir /var/lib/redis
+
+appendonly yes
+appendfsync everysec
+
+# For replica:
+{{ redis_extra_config | default("") }}
