@@ -1,0 +1,15 @@
+# Terraform local cache
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+
+# Terraform state files (never push to GitHub)
+*.tfstate
+*.tfstate.backup
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+
+# Private key files (MUST NEVER PUSH)
+*.pem
+
+# Ansible retry files
+*.retry
