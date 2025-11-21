@@ -1,64 +1,49 @@
 ---
-# ===========================
-# Install & Configure Redis Master
-# ===========================
+# Install Redis Master
 - name: Install Redis Master
   hosts: redis_master
   become: yes
-  vars:
-    redis_bind_interface: "0.0.0.0"
   tasks:
-
-    - name: Install required packages
+    - name: Install Redis
       apt:
         name: redis-server
         state: present
         update_cache: yes
 
-    - name: Configure Redis master - bind
-      lineinfile:
+    - name: Configure Redis Master
+      blockinfile:
         path: /etc/redis/redis.conf
-        regexp: '^bind '
-        line: "bind {{ redis_bind_interface }}"
+        block: |
+          bind 0.0.0.0
+          protected-mode no
 
-    - name: Disable protected mode (required for replication)
-      lineinfile:
-        path: /etc/redis/redis.conf
-        regexp: '^protected-mode '
-        line: "protected-mode no"
-
-    - name: Restart Redis Master
+    - name: Restart Redis
       service:
         name: redis-server
         state: restarted
         enabled: yes
 
 
-# ===========================
-# Install & Configure Redis Replica
-# ===========================
+# Install Redis Replica
 - name: Install Redis Replica
   hosts: redis_replica
   become: yes
-  vars:
-    redis_master_ip: "{{ groups['redis_master'][0] }}"
   tasks:
-
-    - name: Install required packages
+    - name: Install Redis
       apt:
         name: redis-server
         state: present
         update_cache: yes
 
-    - name: Configure Redis replica to sync from master
+    - name: Configure Redis Replica
       blockinfile:
         path: /etc/redis/redis.conf
         block: |
-          replicaof {{ redis_master_ip }} 6379
           bind 0.0.0.0
           protected-mode no
+          replicaof {{ hostvars['redis_master'].ansible_host }} 6379
 
-    - name: Restart Redis Replica
+    - name: Restart Redis
       service:
         name: redis-server
         state: restarted
