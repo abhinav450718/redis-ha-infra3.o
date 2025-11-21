@@ -3,7 +3,7 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = "sa-east-1"
+        AWS_REGION = "eu-west-2"
     }
 
     stages {
@@ -28,7 +28,7 @@ pipeline {
                 ]) {
                     sh '''
                         cd terraform
-                        terraform init -input=false
+                        terraform init
                         terraform apply -auto-approve
                     '''
                 }
@@ -55,20 +55,21 @@ ${bastion_ip}
 
 [all:vars]
 ansible_user=ubuntu
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -J ubuntu@${bastion_ip}'
 ansible_ssh_private_key_file=../terraform/redis-demo-key.pem
+ansible_ssh_common_args='-o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ../terraform/redis-demo-key.pem ubuntu@${bastion_ip}"'
 """
                 }
             }
         }
 
-        /* ------------------ ANSIBLE ------------------ */
+        /* ------------------ ANSIBLE INSTALL ------------------ */
         stage('Install Redis via Ansible') {
             steps {
                 sh '''
                     cd ansible
                     ansible-galaxy install -r requirements.yml
-                    ansible-playbook site.yml -i inventory/hosts.ini
+                    ansible-playbook site.yml -i inventory/hosts.ini \
+                      --ssh-common-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
                 '''
             }
         }
@@ -83,14 +84,14 @@ ansible_ssh_private_key_file=../terraform/redis-demo-key.pem
                 BASTION=$(terraform output -raw bastion_public_ip)
                 cd ..
 
-                echo "Testing Redis Master PING:"
+                echo "TEST → Redis Master"
                 ssh -o StrictHostKeyChecking=no \
                     -o UserKnownHostsFile=/dev/null \
                     -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i terraform/redis-demo-key.pem ubuntu@$BASTION -W %h:%p" \
                     -i terraform/redis-demo-key.pem \
                     ubuntu@$MASTER "redis-cli ping"
 
-                echo "Testing Redis Replica PING:"
+                echo "TEST → Redis Replica"
                 ssh -o StrictHostKeyChecking=no \
                     -o UserKnownHostsFile=/dev/null \
                     -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i terraform/redis-demo-key.pem ubuntu@$BASTION -W %h:%p" \
