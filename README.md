@@ -129,15 +129,13 @@ On both Master & Replica via Bastion using ProxyCommand.
 ## 1️⃣ SSH into Redis Master (via Bastion)
 
 ```
-ssh -i terraform/redis-demo-key.pem \
-    -o ProxyCommand='ssh -i terraform/redis-demo-key.pem ubuntu@13.135.72.10 -W %h:%p' \
-    ubuntu@10.0.2.210
+ssh -i ~/redis-demo-key.pem ubuntu@35.179.132.203
 ```
 
 ### Expected:
 
 ```
-ubuntu@ip-10-0-2-210:~$
+ubuntu@ip-10-0-1-109:~$ 
 ```
 
 ---
@@ -145,9 +143,7 @@ ubuntu@ip-10-0-2-210:~$
 ## 2️⃣ SSH into Redis Replica (via Bastion)
 
 ```
-ssh -i terraform/redis-demo-key.pem \
-    -o ProxyCommand='ssh -i terraform/redis-demo-key.pem ubuntu@13.135.72.10 -W %h:%p' \
-    ubuntu@10.0.3.150
+ssh -i ~/redis-demo-key.pem ubuntu@10.0.3.38
 ```
 
 ---
