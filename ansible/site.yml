@@ -1,16 +1,16 @@
 ---
-# Install Redis Master
 - name: Install Redis Master
   hosts: redis_master
   become: yes
   tasks:
-    - name: Install Redis
+
+    - name: Install Redis Master
       apt:
         name: redis-server
         state: present
         update_cache: yes
 
-    - name: Configure Redis Master
+    - name: Configure Redis master
       blockinfile:
         path: /etc/redis/redis.conf
         block: |
@@ -21,15 +21,14 @@
       service:
         name: redis-server
         state: restarted
-        enabled: yes
 
 
-# Install Redis Replica
 - name: Install Redis Replica
   hosts: redis_replica
   become: yes
   tasks:
-    - name: Install Redis
+
+    - name: Install Redis Replica
       apt:
         name: redis-server
         state: present
@@ -39,12 +38,11 @@
       blockinfile:
         path: /etc/redis/redis.conf
         block: |
+          replicaof {{ hostvars['redis_master'].ansible_host }} 6379
           bind 0.0.0.0
           protected-mode no
-          replicaof {{ hostvars['redis_master'].ansible_host }} 6379
 
     - name: Restart Redis
       service:
         name: redis-server
         state: restarted
-        enabled: yes
