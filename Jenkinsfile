@@ -2,150 +2,131 @@ pipeline {
     agent any
 
     environment {
-        TF_IN_AUTOMATION = "true"
         AWS_REGION = "eu-west-2"
     }
 
     stages {
 
-        /* ---------------------------
-           CHECKOUT CODE
-        ---------------------------- */
-        stage('Checkout') {
+        stage('Checkout Repo') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    userRemoteConfigs: [[
-                        url: 'git@github.com:abhinav450718/redis-ha-infra3.o.git',
-                        credentialsId: 'github-ssh-key'
-                    ]]
-                ])
-                sh 'ls -la'
+                git branch: 'main',
+                    url: 'https://github.com/abhinav450718/redis-ha-infra3.o.git'
             }
         }
 
-        /* ---------------------------
-           INSTALL TERRAFORM
-        ---------------------------- */
         stage('Install Terraform') {
             steps {
                 sh '''
-                  sudo apt-get update -y
-                  sudo apt-get install -y wget unzip
+                    sudo apt-get update -y
+                    sudo apt-get install -y wget unzip
 
-                  wget -O tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
-                  unzip -o tf.zip
-                  sudo mv terraform /usr/local/bin/
+                    wget -O tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+                    unzip -o tf.zip
+                    sudo mv terraform /usr/local/bin/
 
-                  terraform version
+                    terraform version
                 '''
             }
         }
 
-        /* ---------------------------
-           INSTALL ANSIBLE
-        ---------------------------- */
+        stage('Terraform Apply') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        cd terraform
+                        terraform init
+                        terraform apply -auto-approve
+                    '''
+                }
+            }
+        }
+
+        stage('Generate Inventory') {
+            steps {
+                script {
+                    def master_ip  = sh(script: "cd terraform && terraform output -raw redis_master_private_ip",  returnStdout: true).trim()
+                    def replica_ip = sh(script: "cd terraform && terraform output -raw redis_replica_private_ip", returnStdout: true).trim()
+                    def bastion_ip = sh(script: "cd terraform && terraform output -raw bastion_public_ip",       returnStdout: true).trim()
+
+                    writeFile file: "ansible/inventory/hosts.ini", text: """
+[redis_master]
+${master_ip}
+
+[redis_replica]
+${replica_ip}
+
+[bastion]
+${bastion_ip}
+
+[all:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=../terraform/redis-demo-key.pem
+ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -J ubuntu@${bastion_ip}
+"""
+                }
+            }
+        }
+
         stage('Install Ansible') {
             steps {
                 sh '''
-                  sudo apt-get update -y
-                  sudo apt-get install -y python3 python3-pip
-
-                  pip install ansible boto3 botocore
-
-                  ansible --version
-                  ansible-galaxy collection install amazon.aws
-                  ansible-galaxy collection install community.general
+                    sudo apt-get update -y
+                    sudo apt-get install -y python3 python3-pip
+                    pip install ansible boto3 botocore
                 '''
             }
         }
 
-        /* ---------------------------
-           TERRAFORM INIT & APPLY
-        ---------------------------- */
-        stage('Terraform Init + Apply') {
+        stage('Install Redis via Ansible') {
             steps {
-                withCredentials([aws(
-                    credentialsId: 'aws-creds',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                )]) {
-
-                    dir('terraform') {
-                        sh 'terraform init -input=false'
-                        sh 'terraform validate'
-                        sh 'terraform apply -auto-approve'
-                    }
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh '''
+                        cd ansible
+                        ansible-galaxy install -r requirements.yml
+                        ansible-playbook site.yml -i inventory/hosts.ini
+                    '''
                 }
             }
         }
 
-        /* ---------------------------
-           ANSIBLE DEPLOY REDIS CLUSTER
-        ---------------------------- */
-        stage('Ansible Deploy') {
+        stage('Redis Test') {
             steps {
-                withCredentials([aws(
-                    credentialsId: 'aws-creds',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                )]) {
-                    dir('ansible') {
-                        sh 'ansible-inventory -i inventory.aws_ec2.yml --graph'
-                        sh 'ansible-playbook site.yml'
-                    }
-                }
-            }
-        }
+                sh '''
+                    MASTER_IP=$(cd terraform && terraform output -raw redis_master_private_ip)
+                    REPLICA_IP=$(cd terraform && terraform output -raw redis_replica_private_ip)
+                    BASTION_IP=$(cd terraform && terraform output -raw bastion_public_ip)
 
-        /* ---------------------------
-           SHOW SSH + REDIS DEMO COMMANDS
-        ---------------------------- */
-        stage('Show SSH Commands & Redis Status') {
-            steps {
-                script {
-                    def bastion = sh(script: "terraform -chdir=terraform output -raw bastion_public_ip", returnStdout: true).trim()
-                    def master  = sh(script: "terraform -chdir=terraform output -raw redis_master_private_ip", returnStdout: true).trim()
-                    def replica = sh(script: "terraform -chdir=terraform output -raw redis_replica_private_ip", returnStdout: true).trim()
+                    echo "Testing Redis Master..."
+                    ssh -o StrictHostKeyChecking=no -i terraform/redis-demo-key.pem -J ubuntu@$BASTION_IP ubuntu@$MASTER_IP 'redis-cli info replication'
 
-                    echo "==============================="
-                    echo "       SSH ACCESS COMMANDS     "
-                    echo "==============================="
-                    echo "SSH to Bastion:"
-                    echo "ssh -i terraform/redis-demo-key.pem ubuntu@${bastion}"
-                    echo ""
-                    echo "SSH to Redis Master:"
-                    echo "ssh -i ~/.ssh/redis-demo-key.pem ubuntu@${master}"
-                    echo ""
-                    echo "SSH to Redis Replica:"
-                    echo "ssh -i ~/.ssh/redis-demo-key.pem ubuntu@${replica}"
-
-                    echo "==============================="
-                    echo "       REDIS TEST COMMANDS     "
-                    echo "==============================="
-                    echo "Check replication (master):"
-                    echo "redis-cli info replication"
-                    echo ""
-                    echo "Check replication (replica):"
-                    echo "redis-cli info replication"
-                    echo ""
-                    echo "Test write on master:"
-                    echo "redis-cli set demo 'hello-world'"
-                    echo ""
-                    echo "Read on replica:"
-                    echo "redis-cli get demo"
-                }
+                    echo "Testing Redis Replica..."
+                    ssh -o StrictHostKeyChecking=no -i terraform/redis-demo-key.pem -J ubuntu@$BASTION_IP ubuntu@$REPLICA_IP 'redis-cli info replication'
+                '''
             }
         }
     }
 
     post {
+        always {
+            echo "Pipeline finished. Check full logs above."
+        }
         success {
-            echo "🎉 Deployment Successful!"
+            echo "🎉 Redis HA Deployment SUCCESS!"
         }
         failure {
-            echo "❌ Deployment Failed. Check Console Output!"
+            echo "❌ Deployment FAILED! Fix errors shown above."
         }
     }
 }
