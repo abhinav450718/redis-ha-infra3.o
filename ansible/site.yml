@@ -1,122 +1,64 @@
 ---
-
-# -----------------------------------------------------------
-# 1) COPY SSH KEY TO ALL NODES (BASTION, MASTER, REPLICA)
-# -----------------------------------------------------------
-
-- name: Copy SSH key to all nodes (for demo jump-ssh)
-  hosts: all
-  become: yes
-  tasks:
-
-    - name: Ensure .ssh dir exists
-      file:
-        path: /home/ubuntu/.ssh
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: "0700"
-
-    - name: Copy redis-demo-key.pem
-      copy:
-        src: "../terraform/redis-demo-key.pem"
-        dest: "/home/ubuntu/.ssh/redis-demo-key.pem"
-        owner: ubuntu
-        group: ubuntu
-        mode: "0600"
-
-
-# -----------------------------------------------------------
-# 2) ADD REDIS OFFICIAL APT REPOSITORY (UBUNTU 22.04 FIX)
-# -----------------------------------------------------------
-
-- name: Add Redis APT repository on all Redis nodes
-  hosts: _redis_master,_redis_replica
-  become: yes
-  tasks:
-
-    - name: Install dependencies
-      apt:
-        name:
-          - curl
-          - gnupg
-          - lsb-release
-        state: present
-        update_cache: yes
-
-    - name: Add Redis official GPG key
-      apt_key:
-        url: https://packages.redis.io/gpg
-        state: present
-
-    - name: Add Redis APT repository
-      apt_repository:
-        repo: "deb https://packages.redis.io/deb {{ ansible_distribution_release }} main"
-        state: present
-        filename: redis
-
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-
-
-# -----------------------------------------------------------
-# 3) INSTALL REDIS MASTER
-# -----------------------------------------------------------
-
-- name: Install Redis master
-  hosts: _redis_master
+# ===========================
+# Install & Configure Redis Master
+# ===========================
+- name: Install Redis Master
+  hosts: redis_master
   become: yes
   vars:
-    redis_extra_config: ""
+    redis_bind_interface: "0.0.0.0"
   tasks:
 
-    - name: Install Redis server
+    - name: Install required packages
       apt:
-        name: redis-server
+        name: [redis-server]
         state: present
+        update_cache: yes
 
-    - name: Deploy Redis config for master
-      template:
-        src: templates/redis.conf.j2
-        dest: /etc/redis/redis.conf
-        owner: redis
-        group: redis
-        mode: '0644'
+    - name: Configure Redis master
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^bind '
+        line: "bind {{ redis_bind_interface }}"
 
-    - name: Restart Redis master
+    - name: Disable protected mode (required for replication inside VPC)
+      lineinfile:
+        path: /etc/redis/redis.conf
+        regexp: '^protected-mode '
+        line: "protected-mode no"
+
+    - name: Restart Redis
       service:
         name: redis-server
         state: restarted
         enabled: yes
 
 
-# -----------------------------------------------------------
-# 4) INSTALL REDIS REPLICA + REPLICATION CONFIG
-# -----------------------------------------------------------
-
-- name: Install Redis replica
-  hosts: _redis_replica
+# ===========================
+# Install & Configure Redis Replica
+# ===========================
+- name: Install Redis Replica
+  hosts: redis_replica
   become: yes
   vars:
-    redis_extra_config: |
-      replicaof {{ hostvars[groups['_redis_master'][0]].ansible_host }} 6379
+    redis_master_ip: "{{ hostvars['redis_master'].ansible_host }}"
   tasks:
 
-    - name: Install Redis server
+    - name: Install required packages
       apt:
-        name: redis-server
+        name: [redis-server]
         state: present
+        update_cache: yes
 
-    - name: Deploy Redis config for replica
-      template:
-        src: templates/redis.conf.j2
-        dest: /etc/redis/redis.conf
-        owner: redis
-        group: redis
-        mode: '0644'
+    - name: Configure Redis replica to sync from master
+      blockinfile:
+        path: /etc/redis/redis.conf
+        block: |
+          replicaof {{ redis_master_ip }} 6379
+          bind 0.0.0.0
+          protected-mode no
 
-    - name: Restart Redis replica
+    - name: Restart Redis
       service:
         name: redis-server
         state: restarted
