@@ -2,21 +2,30 @@ pipeline {
 
     agent any
 
+    environment {
+        AWS_REGION = "eu-west-2"
+    }
+
     stages {
 
         /* ------------------ CHECKOUT ------------------ */
         stage('Checkout Repo') {
             steps {
                 git branch: 'main',
-                    credentialsId: 'aws-creds',
                     url: 'https://github.com/abhinav450718/redis-ha-infra3.o.git'
             }
         }
 
-        /* ------------------ TERRAFORM APPLY ------------------ */
+        /* ------------------ TERRAFORM ------------------ */
         stage('Terraform Apply') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
                     sh '''
                         cd terraform
                         terraform init
@@ -30,25 +39,24 @@ pipeline {
         stage('Generate Inventory') {
             steps {
                 script {
-
-                    def master  = sh(script: "cd terraform && terraform output -raw redis_master_private_ip", returnStdout: true).trim()
-                    def replica = sh(script: "cd terraform && terraform output -raw redis_replica_private_ip", returnStdout: true).trim()
-                    def bastion = sh(script: "cd terraform && terraform output -raw bastion_public_ip", returnStdout: true).trim()
+                    def master_ip  = sh(script: "cd terraform && terraform output -raw redis_master_private_ip", returnStdout: true).trim()
+                    def replica_ip = sh(script: "cd terraform && terraform output -raw redis_replica_private_ip", returnStdout: true).trim()
+                    def bastion_ip = sh(script: "cd terraform && terraform output -raw bastion_public_ip", returnStdout: true).trim()
 
                     writeFile file: "ansible/inventory/hosts.ini", text: """
 [redis_master]
-${master}
+${master_ip}
 
 [redis_replica]
-${replica}
+${replica_ip}
 
 [bastion]
-${bastion}
+${bastion_ip}
 
 [all:vars]
 ansible_user=ubuntu
 ansible_ssh_private_key_file=../terraform/redis-demo-key.pem
-ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -i ../terraform/redis-demo-key.pem ubuntu@${bastion} -W %h:%p"
+ansible_ssh_common_args='-o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ../terraform/redis-demo-key.pem ubuntu@${bastion_ip}"'
 """
                 }
             }
@@ -60,7 +68,8 @@ ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/n
                 sh '''
                     cd ansible
                     ansible-galaxy install -r requirements.yml
-                    ansible-playbook site.yml -i inventory/hosts.ini
+                    ansible-playbook site.yml -i inventory/hosts.ini \
+                      --ssh-common-args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
                 '''
             }
         }
@@ -68,29 +77,37 @@ ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/n
         /* ------------------ REDIS TEST ------------------ */
         stage('Redis Test – Master & Replica') {
             steps {
-                script {
-                    def MASTER  = sh(script: "cd terraform && terraform output -raw redis_master_private_ip", returnStdout: true).trim()
-                    def REPLICA = sh(script: "cd terraform && terraform output -raw redis_replica_private_ip", returnStdout: true).trim()
-                    def BASTION = sh(script: "cd terraform && terraform output -raw bastion_public_ip", returnStdout: true).trim()
+                sh '''
+                cd terraform
+                MASTER=$(terraform output -raw redis_master_private_ip)
+                REPLICA=$(terraform output -raw redis_replica_private_ip)
+                BASTION=$(terraform output -raw bastion_public_ip)
+                cd ..
 
-                    sh """
-                        echo "Testing Redis Master..."
-                        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        -o ProxyCommand="ssh -i terraform/redis-demo-key.pem ubuntu@${BASTION} -W %h:%p" \
-                        -i terraform/redis-demo-key.pem ubuntu@${MASTER} "redis-cli ping"
+                echo "TEST → Redis Master"
+                ssh -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i terraform/redis-demo-key.pem ubuntu@$BASTION -W %h:%p" \
+                    -i terraform/redis-demo-key.pem \
+                    ubuntu@$MASTER "redis-cli ping"
 
-                        echo "Testing Redis Replica..."
-                        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        -o ProxyCommand="ssh -i terraform/redis-demo-key.pem ubuntu@${BASTION} -W %h:%p" \
-                        -i terraform/redis-demo-key.pem ubuntu@${REPLICA} "redis-cli ping"
-                    """
-                }
+                echo "TEST → Redis Replica"
+                ssh -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i terraform/redis-demo-key.pem ubuntu@$BASTION -W %h:%p" \
+                    -i terraform/redis-demo-key.pem \
+                    ubuntu@$REPLICA "redis-cli ping"
+                '''
             }
         }
     }
 
     post {
-        success { echo "✔ Redis HA Deployment Successful!" }
-        failure { echo "❌ Pipeline FAILED! Check logs." }
+        success {
+            echo "✔ Redis HA Deployment Successful!"
+        }
+        failure {
+            echo "❌ Pipeline FAILED! Check errors above."
+        }
     }
 }
