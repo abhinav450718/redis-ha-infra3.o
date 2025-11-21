@@ -1,11 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        AWS_ACCESS_KEY_ID     = credentials('aws-creds').usr
-        AWS_SECRET_ACCESS_KEY = credentials('aws-creds').psw
-    }
-
     stages {
 
         stage('Checkout Repo') {
@@ -18,8 +13,7 @@ pipeline {
 
         stage('Terraform Apply') {
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding',
-                                  credentialsId: 'aws-creds']]) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-creds']]) {
                     sh '''
                         cd terraform
                         terraform init
@@ -32,16 +26,16 @@ pipeline {
         stage('Generate Inventory') {
             steps {
                 script {
-                    def master = sh(script: "cd terraform && terraform output -raw redis_master_private_ip", returnStdout: true).trim()
+                    def master  = sh(script: "cd terraform && terraform output -raw redis_master_private_ip", returnStdout: true).trim()
                     def replica = sh(script: "cd terraform && terraform output -raw redis_replica_private_ip", returnStdout: true).trim()
                     def bastion = sh(script: "cd terraform && terraform output -raw bastion_public_ip", returnStdout: true).trim()
 
                     writeFile file: "ansible/inventory/hosts.ini", text: """
 [redis_master]
-${master} ansible_user=ubuntu ansible_ssh_private_key_file=../terraform/redis-demo-key.pem ansible_ssh_common_args='-o ProxyCommand="ssh -o StrictHostKeyChecking=no -i ../terraform/redis-demo-key.pem ubuntu@${bastion} -W %h:%p"'
+${master} ansible_user=ubuntu ansible_ssh_private_key_file=../terraform/redis-demo-key.pem ansible_ssh_common_args='-o ProxyCommand="ssh -i ../terraform/redis-demo-key.pem ubuntu@${bastion} -W %h:%p"'
 
 [redis_replica]
-${replica} ansible_user=ubuntu ansible_ssh_private_key_file=../terraform/redis-demo-key.pem ansible_ssh_common_args='-o ProxyCommand="ssh -o StrictHostKeyChecking=no -i ../terraform/redis-demo-key.pem ubuntu@${bastion} -W %h:%p"'
+${replica} ansible_user=ubuntu ansible_ssh_private_key_file=../terraform/redis-demo-key.pem ansible_ssh_common_args='-o ProxyCommand="ssh -i ../terraform/redis-demo-key.pem ubuntu@${bastion} -W %h:%p"'
 """
                 }
             }
@@ -67,13 +61,13 @@ ${replica} ansible_user=ubuntu ansible_ssh_private_key_file=../terraform/redis-d
                     sh """
                         echo "Testing Redis Master..."
                         ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                            -o ProxyCommand="ssh -i terraform/redis-demo-key.pem ubuntu@${BASTION} -W %h:%p" \
-                            -i terraform/redis-demo-key.pem ubuntu@${MASTER} "redis-cli ping"
+                          -o ProxyCommand="ssh -i terraform/redis-demo-key.pem ubuntu@${BASTION} -W %h:%p" \
+                          -i terraform/redis-demo-key.pem ubuntu@${MASTER} "redis-cli ping"
 
                         echo "Testing Redis Replica..."
                         ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                            -o ProxyCommand="ssh -i terraform/redis-demo-key.pem ubuntu@${BASTION} -W %h:%p" \
-                            -i terraform/redis-demo-key.pem ubuntu@${REPLICA} "redis-cli ping"
+                          -o ProxyCommand="ssh -i terraform/redis-demo-key.pem ubuntu@${BASTION} -W %h:%p" \
+                          -i terraform/redis-demo-key.pem ubuntu@${REPLICA} "redis-cli ping"
                     """
                 }
             }
